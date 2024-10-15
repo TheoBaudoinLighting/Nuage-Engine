@@ -6,64 +6,38 @@
 #include "nei_hittable.h"
 #include "nei_bvh.h"
 
-class Scene
-{
+// Class representing the scene containing all objects
+class Scene {
 public:
     Scene() {}
 
-    void AddObject(const HittablePtr& object)
-    {
-        AABB box;
-        if (object->BoundingBox(box)) {
-            m_FiniteObjects.push_back(object);
-        } else {
-            m_InfiniteObjects.push_back(object);
+    // Add an object to the scene
+    void AddObject(const HittablePtr& object) {
+        m_Objects.push_back(object);
+    }
+
+    // Build the BVH from the objects in the scene
+    void BuildBVH() {
+        if (m_Objects.empty()) {
+            m_BVH = nullptr;
+            return;
         }
+        m_BVH = std::make_shared<BVHNode>(m_Objects, 0, m_Objects.size());
     }
 
-    const std::vector<HittablePtr>& GetFiniteObjects() const {
-        return m_FiniteObjects;
+    // Test the intersection of a ray with the scene
+    bool Hit(const Ray& ray, float t_min, float t_max, HitRecord& record) const {
+        if (!m_BVH)
+            return false;
+        return m_BVH->Hit(ray, t_min, t_max, record);
     }
 
-    const std::vector<HittablePtr>& GetInfiniteObjects() const {
-        return m_InfiniteObjects;
-    }
-
-    void BuildBVH()
-    {
-        if (!m_FiniteObjects.empty())
-            m_BVH = std::make_shared<BVHNode>(m_FiniteObjects, 0, m_FiniteObjects.size());
-    }
-
-    bool Hit(const Ray& ray, float t_min, float t_max, HitRecord& record) const
-    {
-        HitRecord temp_rec;
-        bool hit_anything = false;
-        float closest_so_far = t_max;
-
-        // Test finite objects directly
-        for (const auto& object : m_FiniteObjects) {
-            if (object->Hit(ray, t_min, closest_so_far, temp_rec)) {
-                hit_anything = true;
-                closest_so_far = temp_rec.m_T;
-                record = temp_rec;
-            }
-        }
-
-        // Test infinite objects
-        for (const auto& object : m_InfiniteObjects) {
-            if (object->Hit(ray, t_min, closest_so_far, temp_rec)) {
-                hit_anything = true;
-                closest_so_far = temp_rec.m_T;
-                record = temp_rec;
-            }
-        }
-
-        return hit_anything;
+    // Get the list of objects in the scene
+    const std::vector<HittablePtr>& GetObjects() const {
+        return m_Objects;
     }
 
 private:
-    std::vector<HittablePtr> m_FiniteObjects;
-    std::vector<HittablePtr> m_InfiniteObjects;
-    std::shared_ptr<BVHNode> m_BVH;
+    std::vector<HittablePtr> m_Objects; // List of objects in the scene
+    BVHNodePtr m_BVH;                    // Root of the BVH
 };

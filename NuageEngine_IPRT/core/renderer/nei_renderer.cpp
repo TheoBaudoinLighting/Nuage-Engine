@@ -33,6 +33,9 @@ void Renderer::Render(const Scene& scene, const Camera& camera)
     int samples_per_pixel = m_Params.samples_per_pixel;
     int max_depth = m_Params.max_depth;
 
+    Scene scene_copy = scene; // Create a modifiable copy of the scene
+    scene_copy.BuildBVH();
+
     // Multithreading management with OpenMP
     int num_threads = omp_get_max_threads();
     omp_set_num_threads(num_threads);
@@ -119,6 +122,7 @@ void Renderer::Render(const Scene& scene, const Camera& camera)
     ofs.close();
     std::cerr << "Image saved as '" << filename << "'.\n";
 }
+
 // Function to generate a cosine-weighted sample direction
 inline glm::vec3 cosine_weighted_sample(const glm::vec3& normal, const glm::vec3& u, const glm::vec3& v, XorShift& gen_local) {
     float r1 = gen_local.next_float();
@@ -188,6 +192,7 @@ std::vector<PathVertex> Renderer::trace_eye_path(const Ray& ray, const Scene& sc
                 break;
             }
 
+            // Generate a new direction using cosine-weighted sampling
             glm::vec3 w = rec.m_Normal;
             glm::vec3 a = (fabs(w.x) > 0.1f) ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::vec3(1.0f, 0.0f, 0.0f);
             glm::vec3 v = glm::normalize(glm::cross(a, w));
@@ -195,11 +200,20 @@ std::vector<PathVertex> Renderer::trace_eye_path(const Ray& ray, const Scene& sc
 
             glm::vec3 new_direction = cosine_weighted_sample(w, u, v, gen_local);
             float cos_theta = glm::dot(rec.m_Normal, new_direction);
-            glm::vec3 brdf = rec.m_Material->m_Albedo / glm::pi<float>();
+            glm::vec3 brdf = rec.m_Material->m_Albedo / PI;
 
             throughput *= brdf * cos_theta;
 
             current_ray = Ray(rec.m_Point + EPSILON * new_direction, new_direction);
+
+            // Russian roulette termination
+            if (depth >= 5) { // Arbitrary depth to start Russian roulette
+                float max_component = std::max({ throughput.r, throughput.g, throughput.b });
+                float termination_probability = std::min(max_component, 0.95f); // Avoid a probability of 1
+                if (gen_local.next_float() >= termination_probability)
+                    break;
+                throughput /= termination_probability;
+            }
 
             depth++;
         } else {
@@ -211,65 +225,54 @@ std::vector<PathVertex> Renderer::trace_eye_path(const Ray& ray, const Scene& sc
 }
 
 // Trace a path from the light
-std::vector<PathVertex> Renderer::trace_light_path(const Scene& scene, XorShift& gen_local)
-{
-    std::vector<std::shared_ptr<Hittable>> emissive_objects;
+std::vector<PathVertex> Renderer::trace_light_path(const Scene& scene, XorShift& gen_local) {
+    std::vector<HittablePtr> emissive_objects;
 
-    // Retrieve emissive objects from finite objects
-    for (const auto& object : scene.GetFiniteObjects()) {
-        // Rectangle
+    // Traverse the scene objects to find emissive objects
+    for (const auto& object : scene.GetObjects()) {
+        // Check if the object is emissive
+        // Cast to known types to access GetMaterial
         auto rect = std::dynamic_pointer_cast<Rectangle>(object);
         if (rect && rect->GetMaterial()->m_IsEmissive) {
             emissive_objects.push_back(rect);
             continue;
         }
 
-        // Sphere
         auto sphere = std::dynamic_pointer_cast<Sphere>(object);
         if (sphere && sphere->m_Material->m_IsEmissive) {
             emissive_objects.push_back(sphere);
             continue;
         }
 
-        // Transform
-        auto transform = std::dynamic_pointer_cast<Transform>(object);
-        if (transform) {
-            auto child = transform->GetInnerObject();
-            if (child) {
-                auto child_rect = std::dynamic_pointer_cast<Rectangle>(child);
-                if (child_rect && child_rect->GetMaterial()->m_IsEmissive) {
-                    emissive_objects.push_back(child_rect);
-                    continue;
-                }
-
-                auto child_sphere = std::dynamic_pointer_cast<Sphere>(child);
-                if (child_sphere && child_sphere->m_Material->m_IsEmissive) {
-                    emissive_objects.push_back(child_sphere);
-                    continue;
-                }
-
-                // Add other types of emissive objects if necessary
-            }
-        }
-    }
-
-    // Retrieve emissive objects from infinite objects
-    for (const auto& object : scene.GetInfiniteObjects()) {
-        // Plane
         auto plane = std::dynamic_pointer_cast<Plane>(object);
         if (plane && plane->GetMaterial()->m_IsEmissive) {
             emissive_objects.push_back(plane);
             continue;
         }
 
-        // Add other types of infinite emissive objects if necessary
+        auto transform = std::dynamic_pointer_cast<Transform>(object);
+        if (transform) {
+            auto child = transform->GetInnerObject();
+
+            auto child_rect = std::dynamic_pointer_cast<Rectangle>(child);
+            if (child_rect && child_rect->GetMaterial()->m_IsEmissive) {
+                emissive_objects.push_back(child_rect);
+                continue;
+            }
+
+            auto child_sphere = std::dynamic_pointer_cast<Sphere>(child);
+            if (child_sphere && child_sphere->m_Material->m_IsEmissive) {
+                emissive_objects.push_back(child_sphere);
+                continue;
+            }
+        }
     }
 
     if (emissive_objects.empty()) {
         return {};
     }
 
-    // Select a random emissive object
+    // Randomly select an emissive object
     size_t light_index = gen_local.next() % emissive_objects.size();
     auto selected_light = emissive_objects[light_index];
 
@@ -277,6 +280,7 @@ std::vector<PathVertex> Renderer::trace_light_path(const Scene& scene, XorShift&
     glm::vec3 sampled_normal;
     glm::vec3 emission;
 
+    // Handle different types of objects
     if (auto rect = std::dynamic_pointer_cast<Rectangle>(selected_light)) {
         sampled_point = rect->SamplePoint(gen_local);
         sampled_normal = rect->GetNormal();
@@ -295,17 +299,17 @@ std::vector<PathVertex> Renderer::trace_light_path(const Scene& scene, XorShift&
         emission = sphere->m_Material->m_Emission;
     }
     else if (auto plane = std::dynamic_pointer_cast<Plane>(selected_light)) {
-        // Sample a random point on the plane
-        // Since the plane is infinite, we need to define a sampling method
-        // For example, sample within a limited area to avoid issues
+        // Sample a random point on the plane within a defined range
         float range = 10.0f; // Define a sampling range
-        float u = (gen_local.next_float() * 2.0f - 1.0f) * range;
-        float v = (gen_local.next_float() * 2.0f - 1.0f) * range;
-        // Find a point on the plane using two orthogonal vectors
+        float u_sample = (gen_local.next_float() * 2.0f - 1.0f) * range;
+        float v_sample = (gen_local.next_float() * 2.0f - 1.0f) * range;
+
+        // Find two orthogonal vectors on the plane
         glm::vec3 a = (fabs(plane->m_Normal.x) > 0.1f) ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::vec3(1.0f, 0.0f, 0.0f);
         glm::vec3 u_dir = glm::normalize(glm::cross(a, plane->m_Normal));
         glm::vec3 v_dir = glm::normalize(glm::cross(plane->m_Normal, u_dir));
-        sampled_point = plane->m_Point + u * u_dir + v * v_dir;
+
+        sampled_point = plane->m_Point + u_sample * u_dir + v_sample * v_dir;
         sampled_normal = plane->m_Normal;
         emission = plane->m_Material->m_Emission;
     }
@@ -313,6 +317,7 @@ std::vector<PathVertex> Renderer::trace_light_path(const Scene& scene, XorShift&
         return {};
     }
 
+    // Generate a new direction using cosine-weighted sampling
     glm::vec3 w = sampled_normal;
     glm::vec3 a = (fabs(w.x) > 0.1f) ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::vec3(1.0f, 0.0f, 0.0f);
     glm::vec3 v = glm::normalize(glm::cross(a, w));
@@ -342,6 +347,7 @@ std::vector<PathVertex> Renderer::trace_light_path(const Scene& scene, XorShift&
                 break;
             }
 
+            // Generate a new direction using cosine-weighted sampling
             glm::vec3 w_dir = rec.m_Normal;
             glm::vec3 a_dir = (fabs(w_dir.x) > 0.1f) ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::vec3(1.0f, 0.0f, 0.0f);
             glm::vec3 v_dir = glm::normalize(glm::cross(a_dir, w_dir));
@@ -349,10 +355,20 @@ std::vector<PathVertex> Renderer::trace_light_path(const Scene& scene, XorShift&
 
             glm::vec3 new_direction = cosine_weighted_sample(w_dir, u_dir, v_dir, gen_local);
             float cos_theta = glm::dot(rec.m_Normal, new_direction);
-            glm::vec3 brdf = rec.m_Material->m_Albedo; // Remove division by π
+            glm::vec3 brdf = rec.m_Material->m_Albedo / PI;
 
             throughput *= brdf * cos_theta;
+
             current_ray = Ray(rec.m_Point + EPSILON * new_direction, new_direction);
+
+            // Russian roulette termination
+            if (depth >= 5) { // Arbitrary depth to start Russian roulette
+                float max_component = std::max({ throughput.r, throughput.g, throughput.b });
+                float termination_probability = std::min(max_component, 0.95f); // Avoid a probability of 1
+                if (gen_local.next_float() >= termination_probability)
+                    break;
+                throughput /= termination_probability;
+            }
 
             depth++;
         }
@@ -374,15 +390,15 @@ glm::vec3 Renderer::connect_paths(const PathVertex& eye_vertex, const PathVertex
     Ray connecting_ray(eye_vertex.position, direction);
 
     HitRecord rec;
-    if (scene.Hit(connecting_ray, EPSILON, distance, rec)) {
+    if (scene.Hit(connecting_ray, EPSILON, distance - EPSILON, rec)) {
         return glm::vec3(0.0f);
     }
 
-    // Calculate BRDF for eye vertex
-    glm::vec3 f_r = eye_vertex.material->m_Albedo / glm::pi<float>();
+    // Calculate the BRDF for the eye vertex
+    glm::vec3 f_r = eye_vertex.material->m_Albedo / PI;
 
-    // Calculate BRDF for light vertex
-    glm::vec3 f_l = light_vertex.material->m_Albedo / glm::pi<float>();
+    // Calculate the BRDF for the light vertex
+    glm::vec3 f_l = light_vertex.material->m_Albedo / PI;
 
     float cos_theta_eye = glm::dot(eye_vertex.normal, direction);
     float cos_theta_light = glm::dot(light_vertex.normal, -direction);
@@ -392,11 +408,22 @@ glm::vec3 Renderer::connect_paths(const PathVertex& eye_vertex, const PathVertex
         return glm::vec3(0.0f);
     }
 
+    // Multiple importance sampling (MIS) weight using balance heuristic
+    float pdf_eye = cos_theta_eye / PI;
+    float pdf_light = cos_theta_light / PI;
+
+    // Calculate the MIS weight avoiding division by zero
+    float mis_weight = 0.0f;
+    if (pdf_eye + pdf_light > 0.0f) {
+        mis_weight = pdf_eye / (pdf_eye + pdf_light);
+    }
+
     // Calculate the contribution
-    glm::vec3 contribution = f_r * f_l * cos_theta_eye * cos_theta_light / distance_squared;
+    glm::vec3 contribution = mis_weight * f_r * f_l * cos_theta_eye * cos_theta_light / distance_squared;
 
     return contribution;
 }
+
 
 // Double trace function
 glm::vec3 Renderer::double_trace(const Ray& ray, const Scene& scene, XorShift& gen_local)
@@ -406,7 +433,7 @@ glm::vec3 Renderer::double_trace(const Ray& ray, const Scene& scene, XorShift& g
     // Trace a path from the camera
     std::vector<PathVertex> eye_path = trace_eye_path(ray, scene, gen_local);
 
-    // Add emission from emissive vertices in the eye path
+    // Add the emission of emissive vertices in the eye path
     for (const auto& vertex : eye_path) {
         if (vertex.material->m_IsEmissive) {
             radiance += vertex.throughput * vertex.emission;
@@ -432,13 +459,12 @@ glm::vec3 Renderer::double_trace(const Ray& ray, const Scene& scene, XorShift& g
     return radiance;
 }
 
+
 // Compute the squared distance between two colors
 inline float compute_color_distance_sq(const glm::vec3& a, const glm::vec3& b) {
     glm::vec3 diff = a - b;
     return glm::dot(diff, diff);
 }
-
-/*void bilateral_denoise(...) { ... }*/
 
 // Generate a unique filename
 std::string Renderer::generate_unique_filename(const std::string& base, const std::string& ext) {

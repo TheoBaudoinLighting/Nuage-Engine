@@ -5,19 +5,16 @@
 #include "nei_hittable.h"
 #include "nei_material.h"
 #include "nei_aabb.h"
-#include "nei_utility.h" // Include this for XorShift
+#include "nei_utility.h"
 
-class Rectangle : public Hittable
-{
+class Rectangle : public Hittable {
 public:
     Rectangle(const glm::vec3& corner, const glm::vec3& edge1, const glm::vec3& edge2, const MaterialPtr& material)
-        : m_Corner(corner), m_Edge1(edge1), m_Edge2(edge2), m_Material(material)
-    {
-       m_Normal = -glm::normalize(glm::cross(m_Edge1, m_Edge2));
+        : m_Corner(corner), m_Edge1(edge1), m_Edge2(edge2), m_Material(material) {
+        m_Normal = -glm::normalize(glm::cross(m_Edge1, m_Edge2));
     }
 
-    bool Hit(const Ray& ray, float t_min, float t_max, HitRecord& record) const override
-    {
+    virtual bool Hit(const Ray& ray, float t_min, float t_max, HitRecord& record) const override {
         float denom = glm::dot(m_Normal, ray.m_Direction);
         if (fabs(denom) > 1e-6f)
         {
@@ -51,17 +48,20 @@ public:
         return false;
     }
 
-    bool BoundingBox(AABB& output_box) const override
-    {
-        glm::vec3 corner0 = m_Corner;
-        glm::vec3 corner1 = m_Corner + m_Edge1;
-        glm::vec3 corner2 = m_Corner + m_Edge2;
-        glm::vec3 corner3 = m_Corner + m_Edge1 + m_Edge2;
+    virtual bool BoundingBox(AABB& output_box) const override {
+        glm::vec3 p0 = m_Corner;
+        glm::vec3 p1 = m_Corner + m_Edge1;
+        glm::vec3 p2 = m_Corner + m_Edge2;
+        glm::vec3 p3 = m_Corner + m_Edge1 + m_Edge2;
 
-        glm::vec3 min_corner = glm::min(glm::min(corner0, corner1), glm::min(corner2, corner3));
-        glm::vec3 max_corner = glm::max(glm::max(corner0, corner1), glm::max(corner2, corner3));
+        glm::vec3 min = glm::min(glm::min(p0, p1), glm::min(p2, p3));
+        glm::vec3 max = glm::max(glm::max(p0, p1), glm::max(p2, p3));
 
-        output_box = AABB(min_corner, max_corner);
+        // Small expansion to avoid zero volumes
+        min -= glm::vec3(0.0001f);
+        max += glm::vec3(0.0001f);
+
+        output_box = AABB(min, max);
         return true;
     }
 
@@ -88,8 +88,8 @@ public:
     }
 
 private:
-    glm::vec3 m_Corner;      // One corner of the rectangle
-    glm::vec3 m_Edge1;       // One edge vector
+    glm::vec3 m_Corner;      // A corner of the rectangle
+    glm::vec3 m_Edge1;       // An edge vector
     glm::vec3 m_Edge2;       // Another edge vector
     glm::vec3 m_Normal;      // Normal of the rectangle
     MaterialPtr m_Material;  // Material of the rectangle

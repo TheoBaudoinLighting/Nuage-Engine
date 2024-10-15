@@ -142,6 +142,7 @@ int main()
 
     // End of scene setup
 
+    // Build BVH
     scene.BuildBVH();
 
     // Create a Renderer 
