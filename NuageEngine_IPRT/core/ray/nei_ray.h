@@ -3,7 +3,6 @@
 
 #include <glm/glm.hpp>
 
-// Structure representing a ray with an origin and direction
 struct Ray
 {
     glm::vec3 m_Origin;      // Origin of the ray

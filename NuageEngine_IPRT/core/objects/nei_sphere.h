@@ -43,6 +43,24 @@ struct Sphere : public Hittable {
         return false;
     }
 
+    float Area() const {
+        return 4 * glm::pi<float>() * m_Radius * m_Radius;
+    }
+
+    float Pdf(const glm::vec3& origin, const glm::vec3& direction) const {
+        HitRecord rec;
+        Ray ray(origin, direction);
+        if (!this->Hit(ray, EPSILON, std::numeric_limits<float>::max(), rec)) {
+            return 0.0f;
+        }
+
+        float area = this->Area();
+        float distance_squared = glm::length(rec.m_Point - origin);
+        float cosine = glm::dot(rec.m_Normal, -direction);
+
+        return distance_squared / (cosine * area);
+    }
+
     virtual bool BoundingBox(AABB& output_box) const override {
         output_box = AABB(
             m_Center - glm::vec3(m_Radius + 0.0001f),
@@ -50,6 +68,8 @@ struct Sphere : public Hittable {
         );
         return true;
     }
+
+    MaterialPtr GetMaterial() const override { return m_Material; }
 };
 
 typedef std::shared_ptr<Sphere> SpherePtr;

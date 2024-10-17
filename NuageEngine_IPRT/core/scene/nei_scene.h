@@ -37,7 +37,20 @@ public:
         return m_Objects;
     }
 
+    // Get the list of emissive objects
+    std::vector<HittablePtr> GetEmissiveObjects() const {
+        std::vector<HittablePtr> emissive_objects;
+        for (const auto& object : m_Objects) {
+            if (auto material = object->GetMaterial()) {
+                if (material->m_IsEmissive) {
+                    emissive_objects.push_back(object);
+                }
+            }
+        }
+        return emissive_objects;
+    }
+
 private:
     std::vector<HittablePtr> m_Objects; // List of objects in the scene
-    BVHNodePtr m_BVH;                    // Root of the BVH
+    BVHNodePtr m_BVH;                   // Root of the BVH
 };

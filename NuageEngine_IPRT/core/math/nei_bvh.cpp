@@ -6,14 +6,11 @@
 // Default constructor
 BVHNode::BVHNode() {}
 
-// Constructor that builds the BVH from a list of objects
 BVHNode::BVHNode(const std::vector<HittablePtr>& objects, size_t start, size_t end) {
-    auto objs = objects; // Copy for manipulation
+    auto objs = objects; 
 
-    // Select a random axis (0 = x, 1 = y, 2 = z)
     int axis = std::random_device{}() % 3;
 
-    // Comparator to sort objects along the selected axis
     auto comparator = [axis](const HittablePtr& a, const HittablePtr& b) -> bool {
         AABB box_a, box_b;
         if (!a->BoundingBox(box_a) || !b->BoundingBox(box_b)) {
@@ -54,7 +51,6 @@ BVHNode::BVHNode(const std::vector<HittablePtr>& objects, size_t start, size_t e
     m_Box = SurroundingBox(box_left, box_right);
 }
 
-// Method to test intersection with a ray
 bool BVHNode::Hit(const Ray& ray, float t_min, float t_max, HitRecord& record) const {
     if (!m_Box.Hit(ray, t_min, t_max))
         return false;
@@ -65,7 +61,6 @@ bool BVHNode::Hit(const Ray& ray, float t_min, float t_max, HitRecord& record) c
     return hit_left || hit_right;
 }
 
-// Method to get the bounding box of the node
 bool BVHNode::BoundingBox(AABB& output_box) const {
     output_box = m_Box;
     return true;

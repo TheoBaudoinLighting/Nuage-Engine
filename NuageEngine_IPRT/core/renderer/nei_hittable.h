@@ -1,27 +1,36 @@
-// nei_hittable.h
-#pragma once
-
-#include <glm/glm.hpp>
-
-#include "nei_aabb.h"
-#include <memory>
-#include "nei_material.h"
-
-// Structure to store hit record details
-struct HitRecord {
-    float m_T; // Time of hit
-    glm::vec3 m_Point; // Point of intersection
-    glm::vec3 m_Normal; // Normal at the intersection
-    MaterialPtr m_Material; // Material of the intersected object
-};
-
-struct Ray;
-
-// Abstract class for hittable objects
-struct Hittable {
-    virtual bool Hit(const Ray& ray, float t_min, float t_max, HitRecord& record) const = 0;
-    virtual bool BoundingBox(AABB& output_box) const = 0;
-};
-
-// Type definition for a shared pointer to a Hittable object
-typedef std::shared_ptr<Hittable> HittablePtr;
+   #pragma once
+   
+   #include <glm/glm.hpp>
+   #include <memory>
+   
+   #include "nei_aabb.h"
+   #include "nei_material.h"
+   
+   struct Ray;
+   
+   struct Hittable;
+   typedef std::shared_ptr<Hittable> HittablePtr;
+   
+   struct HitRecord {
+       float m_T; // Intersection time
+       glm::vec3 m_Point; // Intersection point
+       glm::vec3 m_Normal; // Normal at the intersection
+       MaterialPtr m_Material; // Material of the intersected object
+       HittablePtr m_Object; // Object of the intersection
+   };
+   
+   struct Hittable {
+       // Check if the ray hits the object
+       virtual bool Hit(const Ray& ray, float t_min, float t_max, HitRecord& record) const = 0;
+       
+       // Get the bounding box of the object
+       virtual bool BoundingBox(AABB& output_box) const = 0;
+       
+       // Get the material of the object
+       virtual MaterialPtr GetMaterial() const { return nullptr; } 
+       
+       // Get the area of the object
+       virtual float Area() const {
+           return 0.0f;
+       }
+   };

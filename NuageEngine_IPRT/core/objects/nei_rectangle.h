@@ -57,7 +57,6 @@ public:
         glm::vec3 min = glm::min(glm::min(p0, p1), glm::min(p2, p3));
         glm::vec3 max = glm::max(glm::max(p0, p1), glm::max(p2, p3));
 
-        // Small expansion to avoid zero volumes
         min -= glm::vec3(0.0001f);
         max += glm::vec3(0.0001f);
 
@@ -65,26 +64,42 @@ public:
         return true;
     }
 
-    // Method to sample a point on the rectangle
+    float Pdf(const glm::vec3& origin, const glm::vec3& direction) const 
+    {
+        HitRecord rec;
+        Ray ray(origin, direction);
+        if (!this->Hit(ray, EPSILON, std::numeric_limits<float>::max(), rec)) 
+        {
+            return 0.0f;
+        }
+
+        float area = this->Area();
+        float distance_squared = glm::length(rec.m_Point - origin);
+        float cosine = glm::dot(rec.m_Normal, -direction);
+
+        return distance_squared / (cosine * area);
+    }
+
     glm::vec3 SamplePoint(XorShift& gen_local) const {
         float u = gen_local.next_float();
         float v = gen_local.next_float();
         return m_Corner + u * m_Edge1 + v * m_Edge2;
     }
 
-    // Area of the rectangle
     float Area() const {
         return glm::length(glm::cross(m_Edge1, m_Edge2));
     }
 
-    // Method to get the normal of the rectangle
     glm::vec3 GetNormal() const {
         return m_Normal;
     }
 
-    // Method to get the material of the rectangle
     MaterialPtr GetMaterial() const {
         return m_Material;
+    }
+
+    float GetArea() const {
+        return glm::length(glm::cross(m_Edge1, m_Edge2));
     }
 
 private:

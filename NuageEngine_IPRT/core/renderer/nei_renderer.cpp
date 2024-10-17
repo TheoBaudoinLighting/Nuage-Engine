@@ -19,21 +19,18 @@
 #include "nei_sphere.h"
 #include "nei_transform.h"
 
-// Constructor for the Renderer class
+// Constructor of the Renderer class
 Renderer::Renderer(const RendererParameters& params)
-    : m_Params(params), m_Pixels(params.image_width * params.image_height, glm::vec3(0.0f))
-{
-}
+    : m_Params(params), m_Pixels(params.image_width * params.image_height, glm::vec3(0.0f)) {}
 
 void Renderer::Render(const Scene& scene, const Camera& camera)
 {
-    // Rendering preparation
+    // Prepare for rendering
     int image_width = m_Params.image_width;
     int image_height = m_Params.image_height;
     int samples_per_pixel = m_Params.samples_per_pixel;
-    int max_depth = m_Params.max_depth;
 
-    Scene scene_copy = scene; // Create a modifiable copy of the scene
+    Scene scene_copy = scene; 
     scene_copy.BuildBVH();
 
     // Multithreading management with OpenMP
@@ -72,20 +69,16 @@ void Renderer::Render(const Scene& scene, const Camera& camera)
             // Use mean_color as the final pixel color
             glm::vec3 pixel_color = mean_color;
 
-            // Apply gamma correction (gamma 2.2)
+            // Gamma correction
             float r_val = std::sqrt(pixel_color.r);
             float g_val = std::sqrt(pixel_color.g);
             float b_val = std::sqrt(pixel_color.b);
             m_Pixels[j * image_width + i] = glm::vec3(r_val, g_val, b_val);
         }
-
         // Display progress
-        int completed = j + 1;
-        if (completed % (image_height / 100) == 0) {
 #pragma omp critical
-            {
-                std::cerr << "Progress: " << (100.0 * completed / image_height) << "%\n" << std::flush;
-            }
+        {
+            std::cerr << "\rProgress: " << std::fixed << std::setprecision(2) << (100.0 * (j + 1) / image_height) << "%" << std::flush;
         }
     }
 
@@ -123,8 +116,9 @@ void Renderer::Render(const Scene& scene, const Camera& camera)
     std::cerr << "Image saved as '" << filename << "'.\n";
 }
 
-// Function to generate a cosine-weighted sample direction
-inline glm::vec3 cosine_weighted_sample(const glm::vec3& normal, const glm::vec3& u, const glm::vec3& v, XorShift& gen_local) {
+// Function to generate a cosine-weighted sample
+inline glm::vec3 cosine_weighted_sample(const glm::vec3& normal, XorShift& gen_local) 
+{
     float r1 = gen_local.next_float();
     float r2 = gen_local.next_float();
     float phi = 2.0f * PI * r1;
@@ -133,72 +127,65 @@ inline glm::vec3 cosine_weighted_sample(const glm::vec3& normal, const glm::vec3
     float y = std::sin(phi) * sqrt_r2;
     float z = std::sqrt(1.0f - r2);
 
+    // Orthonormal basis
+    glm::vec3 u = glm::normalize(glm::cross((fabs(normal.x) > 0.1f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0)), normal));
+    glm::vec3 v = glm::cross(normal, u);
+
     return u * x + v * y + normal * z;
 }
 
-// Function to multiply a vector by a scalar
-inline glm::vec3 multiply(const glm::vec3& vec, int scalar) {
-    return vec * static_cast<float>(scalar);
-}
+// MIS weighting function
+float Renderer::mis_weight(const PathVertex& eye_vertex, const PathVertex& light_vertex, const Scene& scene) 
+{
+    float pdf_light = compute_pdf_light(eye_vertex, light_vertex, scene);
+    float pdf_bsdf = compute_pdf_bsdf(eye_vertex, light_vertex);
 
-// Function to compute the variance of a set of samples
-inline float compute_variance(const std::vector<glm::vec3>& samples, glm::vec3 mean) {
-    float variance_r = 0.0f;
-    float variance_g = 0.0f;
-    float variance_b = 0.0f;
-    for (const auto& sample : samples) {
-        float diff_r = sample.r - mean.r;
-        float diff_g = sample.g - mean.g;
-        float diff_b = sample.b - mean.b;
-        variance_r += diff_r * diff_r;
-        variance_g += diff_g * diff_g;
-        variance_b += diff_b * diff_b;
+    // Balance heuristic for MIS, used to combine the light and BSDF PDFs
+    float weight = 0.0f;
+    if (pdf_light + pdf_bsdf > 0.0f) {
+        weight = pdf_bsdf / (pdf_light + pdf_bsdf);
     }
-    variance_r /= samples.size();
-    variance_g /= samples.size();
-    variance_b /= samples.size();
-    return (variance_r + variance_g + variance_b) / 3.0f;
-}
 
-// Function to update mean and variance using Welford's algorithm
-void Renderer::update_statistics(glm::vec3& mean, glm::vec3& M2, int n, const glm::vec3& new_sample) {
-    glm::vec3 delta = new_sample - mean; // Calculate the difference between the new sample and the current mean
-    mean += delta / static_cast<float>(n); // Update the mean
-    glm::vec3 delta2 = new_sample - mean; // Calculate the difference between the new sample and the updated mean
-    M2 += delta * delta2; // Update the M2 value
+    return weight;
 }
 
 // Trace a path from the camera
-std::vector<PathVertex> Renderer::trace_eye_path(const Ray& ray, const Scene& scene, XorShift& gen_local) {
+std::vector<PathVertex> Renderer::trace_eye_path(const Ray& ray, const Scene& scene, XorShift& gen_local) 
+{
+    // Trace a path from the camera
     std::vector<PathVertex> path;
     Ray current_ray = ray;
     glm::vec3 throughput(1.0f);
     int depth = 0;
     int max_depth = m_Params.max_depth;
 
-    while (depth < max_depth) {
+    while (depth < max_depth) 
+    {
         HitRecord rec;
-        if (scene.Hit(current_ray, EPSILON, std::numeric_limits<float>::max(), rec)) 
-        {
+        if (scene.Hit(current_ray, EPSILON, std::numeric_limits<float>::max(), rec)) {
             PathVertex vertex;
             vertex.position = rec.m_Point;
             vertex.normal = rec.m_Normal;
             vertex.material = rec.m_Material;
             vertex.emission = rec.m_Material->m_Emission;
             vertex.throughput = throughput;
-            path.push_back(vertex);
+            vertex.geometry = rec.m_Object;
 
             if (rec.m_Material->m_IsEmissive) {
+                vertex.is_light = true;
+                vertex.direct_light = glm::vec3(0.0f);
+                path.push_back(vertex);
                 break;
             }
 
-            // Generate a new direction using cosine-weighted sampling
-            glm::vec3 w = rec.m_Normal;
-            glm::vec3 a = (fabs(w.x) > 0.1f) ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::vec3(1.0f, 0.0f, 0.0f);
-            glm::vec3 v = glm::normalize(glm::cross(a, w));
-            glm::vec3 u = glm::cross(w, v);
+            // Calculate direct light via NEE
+            glm::vec3 direct_light = sample_lights(rec, scene, gen_local);
+            vertex.direct_light = direct_light;
 
-            glm::vec3 new_direction = cosine_weighted_sample(w, u, v, gen_local);
+            path.push_back(vertex);
+
+            // Generate a new direction
+            glm::vec3 new_direction = cosine_weighted_sample(rec.m_Normal, gen_local);
             float cos_theta = glm::dot(rec.m_Normal, new_direction);
             glm::vec3 brdf = rec.m_Material->m_Albedo / PI;
 
@@ -206,10 +193,10 @@ std::vector<PathVertex> Renderer::trace_eye_path(const Ray& ray, const Scene& sc
 
             current_ray = Ray(rec.m_Point + EPSILON * new_direction, new_direction);
 
-            // Russian roulette termination
-            if (depth >= 5) { // Arbitrary depth to start Russian roulette
+            // Russian roulette
+            if (depth >= 5) {
                 float max_component = std::max({ throughput.r, throughput.g, throughput.b });
-                float termination_probability = std::min(max_component, 0.95f); // Avoid a probability of 1
+                float termination_probability = std::min(max_component, 0.95f);
                 if (gen_local.next_float() >= termination_probability)
                     break;
                 throughput /= termination_probability;
@@ -225,54 +212,15 @@ std::vector<PathVertex> Renderer::trace_eye_path(const Ray& ray, const Scene& sc
 }
 
 // Trace a path from the light
-std::vector<PathVertex> Renderer::trace_light_path(const Scene& scene, XorShift& gen_local) {
-    std::vector<HittablePtr> emissive_objects;
-
-    // Traverse the scene objects to find emissive objects
-    for (const auto& object : scene.GetObjects()) {
-        // Check if the object is emissive
-        // Cast to known types to access GetMaterial
-        auto rect = std::dynamic_pointer_cast<Rectangle>(object);
-        if (rect && rect->GetMaterial()->m_IsEmissive) {
-            emissive_objects.push_back(rect);
-            continue;
-        }
-
-        auto sphere = std::dynamic_pointer_cast<Sphere>(object);
-        if (sphere && sphere->m_Material->m_IsEmissive) {
-            emissive_objects.push_back(sphere);
-            continue;
-        }
-
-        auto plane = std::dynamic_pointer_cast<Plane>(object);
-        if (plane && plane->GetMaterial()->m_IsEmissive) {
-            emissive_objects.push_back(plane);
-            continue;
-        }
-
-        auto transform = std::dynamic_pointer_cast<Transform>(object);
-        if (transform) {
-            auto child = transform->GetInnerObject();
-
-            auto child_rect = std::dynamic_pointer_cast<Rectangle>(child);
-            if (child_rect && child_rect->GetMaterial()->m_IsEmissive) {
-                emissive_objects.push_back(child_rect);
-                continue;
-            }
-
-            auto child_sphere = std::dynamic_pointer_cast<Sphere>(child);
-            if (child_sphere && child_sphere->m_Material->m_IsEmissive) {
-                emissive_objects.push_back(child_sphere);
-                continue;
-            }
-        }
-    }
+std::vector<PathVertex> Renderer::trace_light_path(const Scene& scene, XorShift& gen_local) 
+{
+    std::vector<HittablePtr> emissive_objects = scene.GetEmissiveObjects();
 
     if (emissive_objects.empty()) {
         return {};
     }
 
-    // Randomly select an emissive object
+    // Select a random light source
     size_t light_index = gen_local.next() % emissive_objects.size();
     auto selected_light = emissive_objects[light_index];
 
@@ -286,44 +234,12 @@ std::vector<PathVertex> Renderer::trace_light_path(const Scene& scene, XorShift&
         sampled_normal = rect->GetNormal();
         emission = rect->GetMaterial()->m_Emission;
     }
-    else if (auto sphere = std::dynamic_pointer_cast<Sphere>(selected_light)) {
-        float u = gen_local.next_float();
-        float v = gen_local.next_float();
-        float theta = 2.0f * PI * u;
-        float phi = std::acos(1.0f - 2.0f * v);
-        float x = std::sin(phi) * std::cos(theta);
-        float y = std::sin(phi) * std::sin(theta);
-        float z = std::cos(phi);
-        sampled_normal = glm::vec3(x, y, z);
-        sampled_point = sphere->m_Center + sampled_normal * sphere->m_Radius;
-        emission = sphere->m_Material->m_Emission;
-    }
-    else if (auto plane = std::dynamic_pointer_cast<Plane>(selected_light)) {
-        // Sample a random point on the plane within a defined range
-        float range = 10.0f; // Define a sampling range
-        float u_sample = (gen_local.next_float() * 2.0f - 1.0f) * range;
-        float v_sample = (gen_local.next_float() * 2.0f - 1.0f) * range;
-
-        // Find two orthogonal vectors on the plane
-        glm::vec3 a = (fabs(plane->m_Normal.x) > 0.1f) ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::vec3(1.0f, 0.0f, 0.0f);
-        glm::vec3 u_dir = glm::normalize(glm::cross(a, plane->m_Normal));
-        glm::vec3 v_dir = glm::normalize(glm::cross(plane->m_Normal, u_dir));
-
-        sampled_point = plane->m_Point + u_sample * u_dir + v_sample * v_dir;
-        sampled_normal = plane->m_Normal;
-        emission = plane->m_Material->m_Emission;
-    }
     else {
         return {};
     }
 
-    // Generate a new direction using cosine-weighted sampling
-    glm::vec3 w = sampled_normal;
-    glm::vec3 a = (fabs(w.x) > 0.1f) ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::vec3(1.0f, 0.0f, 0.0f);
-    glm::vec3 v = glm::normalize(glm::cross(a, w));
-    glm::vec3 u = glm::cross(w, v);
-
-    glm::vec3 direction = cosine_weighted_sample(w, u, v, gen_local);
+    // Generate a new direction
+    glm::vec3 direction = cosine_weighted_sample(sampled_normal, gen_local);
 
     glm::vec3 throughput = emission;
 
@@ -347,13 +263,8 @@ std::vector<PathVertex> Renderer::trace_light_path(const Scene& scene, XorShift&
                 break;
             }
 
-            // Generate a new direction using cosine-weighted sampling
-            glm::vec3 w_dir = rec.m_Normal;
-            glm::vec3 a_dir = (fabs(w_dir.x) > 0.1f) ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::vec3(1.0f, 0.0f, 0.0f);
-            glm::vec3 v_dir = glm::normalize(glm::cross(a_dir, w_dir));
-            glm::vec3 u_dir = glm::cross(w_dir, v_dir);
-
-            glm::vec3 new_direction = cosine_weighted_sample(w_dir, u_dir, v_dir, gen_local);
+            // Generate a new direction
+            glm::vec3 new_direction = cosine_weighted_sample(rec.m_Normal, gen_local);
             float cos_theta = glm::dot(rec.m_Normal, new_direction);
             glm::vec3 brdf = rec.m_Material->m_Albedo / PI;
 
@@ -361,10 +272,10 @@ std::vector<PathVertex> Renderer::trace_light_path(const Scene& scene, XorShift&
 
             current_ray = Ray(rec.m_Point + EPSILON * new_direction, new_direction);
 
-            // Russian roulette termination
-            if (depth >= 5) { // Arbitrary depth to start Russian roulette
+            // Russian roulette
+            if (depth >= 5) {
                 float max_component = std::max({ throughput.r, throughput.g, throughput.b });
-                float termination_probability = std::min(max_component, 0.95f); // Avoid a probability of 1
+                float termination_probability = std::min(max_component, 0.95f);
                 if (gen_local.next_float() >= termination_probability)
                     break;
                 throughput /= termination_probability;
@@ -381,13 +292,14 @@ std::vector<PathVertex> Renderer::trace_light_path(const Scene& scene, XorShift&
 }
 
 // Connect paths between eye and light vertices
-glm::vec3 Renderer::connect_paths(const PathVertex& eye_vertex, const PathVertex& light_vertex, const Scene& scene) {
+glm::vec3 Renderer::connect_paths(const PathVertex& eye_vertex, const PathVertex& light_vertex, const Scene& scene) 
+{
     glm::vec3 direction = light_vertex.position - eye_vertex.position;
     float distance_squared = glm::dot(direction, direction);
     float distance = std::sqrt(distance_squared);
     direction = glm::normalize(direction);
 
-    Ray connecting_ray(eye_vertex.position, direction);
+    Ray connecting_ray(eye_vertex.position + EPSILON * direction, direction);
 
     HitRecord rec;
     if (scene.Hit(connecting_ray, EPSILON, distance - EPSILON, rec)) {
@@ -395,7 +307,7 @@ glm::vec3 Renderer::connect_paths(const PathVertex& eye_vertex, const PathVertex
     }
 
     // Calculate the BRDF for the eye vertex
-    glm::vec3 f_r = eye_vertex.material->m_Albedo / PI;
+    glm::vec3 f_e = eye_vertex.material->m_Albedo / PI;
 
     // Calculate the BRDF for the light vertex
     glm::vec3 f_l = light_vertex.material->m_Albedo / PI;
@@ -403,77 +315,159 @@ glm::vec3 Renderer::connect_paths(const PathVertex& eye_vertex, const PathVertex
     float cos_theta_eye = glm::dot(eye_vertex.normal, direction);
     float cos_theta_light = glm::dot(light_vertex.normal, -direction);
 
-    // Check if the angles are valid
+    // Check if angles are valid
     if (cos_theta_eye <= 0.0f || cos_theta_light <= 0.0f) {
         return glm::vec3(0.0f);
     }
 
-    // Multiple importance sampling (MIS) weight using balance heuristic
-    float pdf_eye = cos_theta_eye / PI;
-    float pdf_light = cos_theta_light / PI;
-
-    // Calculate the MIS weight avoiding division by zero
-    float mis_weight = 0.0f;
-    if (pdf_eye + pdf_light > 0.0f) {
-        mis_weight = pdf_eye / (pdf_eye + pdf_light);
-    }
-
     // Calculate the contribution
-    glm::vec3 contribution = mis_weight * f_r * f_l * cos_theta_eye * cos_theta_light / distance_squared;
+    glm::vec3 contribution = f_e * f_l * cos_theta_eye * cos_theta_light / distance_squared;
 
-    return contribution;
+    // Apply throughputs
+    contribution *= eye_vertex.throughput * light_vertex.throughput;
+
+    // Calculate the MIS weight
+    float weight = mis_weight(eye_vertex, light_vertex, scene);
+
+    return contribution * weight;
 }
 
-
-// Double trace function
-glm::vec3 Renderer::double_trace(const Ray& ray, const Scene& scene, XorShift& gen_local)
+// Double trace
+glm::vec3 Renderer::double_trace(const Ray& ray, const Scene& scene, XorShift& gen_local) 
 {
     glm::vec3 radiance(0.0f);
 
-    // Trace a path from the camera
+    // Trace the path from the camera
     std::vector<PathVertex> eye_path = trace_eye_path(ray, scene, gen_local);
 
-    // Add the emission of emissive vertices in the eye path
-    for (const auto& vertex : eye_path) {
-        if (vertex.material->m_IsEmissive) {
-            radiance += vertex.throughput * vertex.emission;
-        }
-    }
-
-    // Trace a path from the light
+    // Trace the path from the light
     std::vector<PathVertex> light_path = trace_light_path(scene, gen_local);
 
-    // Connect the paths
-    for (size_t i = 0; i < eye_path.size(); ++i) {
-        for (size_t j = 0; j < light_path.size(); ++j) {
-            glm::vec3 contrib = connect_paths(eye_path[i], light_path[j], scene);
+    // Connect paths with MIS
+    for (const auto& eye_vertex : eye_path) 
+    {
+        // NEE contribution
+        radiance += eye_vertex.throughput * eye_vertex.direct_light;
 
-            // Multiply by the throughput of both paths
-            contrib *= eye_path[i].throughput;
-            contrib *= light_path[j].throughput;
+        for (const auto& light_vertex : light_path) {
+            glm::vec3 contrib = connect_paths(eye_vertex, light_vertex, scene);
 
             radiance += contrib;
+        }
+
+        // Add emission if the vertex is a light source
+        if (eye_vertex.is_light) {
+            radiance += eye_vertex.throughput * eye_vertex.emission;
         }
     }
 
     return radiance;
 }
 
+// Sample lights
+glm::vec3 Renderer::sample_lights(const HitRecord& rec, const Scene& scene, XorShift& gen_local) 
+{
+    glm::vec3 direct_light(0.0f);
 
-// Compute the squared distance between two colors
-inline float compute_color_distance_sq(const glm::vec3& a, const glm::vec3& b) {
-    glm::vec3 diff = a - b;
-    return glm::dot(diff, diff);
+    // Get the light sources in the scene
+    std::vector<HittablePtr> emissive_objects = scene.GetEmissiveObjects();
+
+    if (emissive_objects.empty()) {
+        return direct_light;
+    }
+
+    // Select a random light source
+    size_t light_index = gen_local.next() % emissive_objects.size();
+    auto light = emissive_objects[light_index];
+
+    // Sample a point on the light source
+    glm::vec3 light_point, light_normal;
+    float pdf = 1.0f;
+
+    if (auto rect = std::dynamic_pointer_cast<Rectangle>(light)) {
+        light_point = rect->SamplePoint(gen_local);
+        light_normal = rect->GetNormal();
+        pdf = 1.0f / rect->Area();
+    } else {
+        return direct_light;
+    }
+
+    // Direction to the light
+    glm::vec3 to_light = light_point - rec.m_Point;
+    float distance_squared = glm::dot(to_light, to_light);
+    glm::vec3 direction = glm::normalize(to_light);
+
+    // Check for shadows (shadow ray)
+    Ray shadow_ray(rec.m_Point + EPSILON * direction, direction);
+    HitRecord shadow_rec;
+    if (scene.Hit(shadow_ray, EPSILON, std::sqrt(distance_squared) - EPSILON, shadow_rec)) {
+        return direct_light;
+    }
+
+    // Calculate the contribution
+    float cos_theta_surface = glm::dot(rec.m_Normal, direction);
+    float cos_theta_light = glm::dot(light_normal, -direction);
+
+    if (cos_theta_surface <= 0.0f || cos_theta_light <= 0.0f) {
+        return direct_light;
+    }
+
+    MaterialPtr light_material = light->GetMaterial();
+    glm::vec3 emission = light_material->m_Emission;
+    glm::vec3 brdf = rec.m_Material->m_Albedo / PI;
+
+    direct_light = emission * brdf * cos_theta_surface * cos_theta_light / (distance_squared * pdf * emissive_objects.size());
+
+    return direct_light;
+}
+
+// Update mean and variance
+void Renderer::update_statistics(glm::vec3& mean, glm::vec3& M2, int n, const glm::vec3& new_sample) 
+{
+    glm::vec3 delta = new_sample - mean;
+    mean += delta / static_cast<float>(n);
+    glm::vec3 delta2 = new_sample - mean;
+    M2 += delta * delta2;
 }
 
 // Generate a unique filename
-std::string Renderer::generate_unique_filename(const std::string& base, const std::string& ext) {
+std::string Renderer::generate_unique_filename(const std::string& base, const std::string& ext) 
+{
     std::string filename;
     int file_index = 1;
     do {
         std::ostringstream oss;
         oss << base << "_" << std::setw(3) << std::setfill('0') << file_index++ << "." << ext;
         filename = oss.str();
-    } while (std::filesystem::exists(filename)); // Check if the file already exists
+    } while (std::filesystem::exists(filename));
     return filename;
+}
+
+float Renderer::compute_pdf_light(const PathVertex& eye_vertex, const PathVertex& light_vertex, const Scene& scene) const 
+{
+    std::vector<HittablePtr> emissive_objects = scene.GetEmissiveObjects();
+    size_t num_lights = emissive_objects.size();
+
+    float pdf_choose_light = 1.0f / static_cast<float>(num_lights);
+
+    float area = light_vertex.geometry->Area();
+    float pdf_sample_light = 1.0f / area;
+
+    float pdf_light = pdf_choose_light * pdf_sample_light;
+
+    return pdf_light;
+}
+
+float Renderer::compute_pdf_bsdf(const PathVertex& eye_vertex, const PathVertex& light_vertex) const 
+{
+    glm::vec3 direction = glm::normalize(light_vertex.position - eye_vertex.position);
+
+    float cos_theta = glm::dot(eye_vertex.normal, direction);
+    if (cos_theta <= 0.0f) {
+        return 0.0f;
+    }
+
+    float pdf_bsdf = cos_theta / PI;
+
+    return pdf_bsdf;
 }

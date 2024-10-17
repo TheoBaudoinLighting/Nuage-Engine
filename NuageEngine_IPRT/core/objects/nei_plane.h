@@ -4,7 +4,8 @@
 #include <glm/glm.hpp>
 #include "nei_hittable.h"
 
-struct Plane : public Hittable {
+struct Plane : public Hittable 
+{
     glm::vec3 m_Point;       // A point on the plane
     glm::vec3 m_Normal;      // The normal of the plane
     MaterialPtr m_Material;  // The material of the plane
@@ -29,14 +30,32 @@ struct Plane : public Hittable {
         return false;
     }
 
+    float Area() const {
+        return std::numeric_limits<float>::infinity();
+    }
+
+    float Pdf(const glm::vec3& origin, const glm::vec3& direction) const {
+        HitRecord rec;
+        Ray ray(origin, direction);
+        if (!this->Hit(ray, EPSILON, std::numeric_limits<float>::max(), rec)) {
+            return 0.0f;
+        }
+
+        float area = this->Area();
+        float distance_squared = glm::length(rec.m_Point - origin);
+        float cosine = glm::dot(rec.m_Normal, -direction);
+        return distance_squared / (cosine * area);
+    }
+
     virtual bool BoundingBox(AABB& output_box) const override {
-        // Infinite planes do not have a finite bounding box
         return false;
     }
 
     MaterialPtr GetMaterial() const {
         return m_Material;
     }
+
+    
 };
 
 typedef std::shared_ptr<Plane> PlanePtr;

@@ -55,8 +55,8 @@ int main()
     RendererParameters params;
     params.image_width = 640;
     params.image_height = 360;
-    params.samples_per_pixel = 32;  // Min = 4
-    params.max_depth = 10;
+    params.samples_per_pixel = 128;  // Min = 4
+    params.max_depth = 3;
     params.russian_roulette = 0.5f;
 
     // Create a scene
@@ -132,6 +132,7 @@ int main()
     auto transformed_sphere = std::make_shared<Transform>(sphere, transform);
     scene.AddObject(transformed_sphere);
 
+    // Create camera
     Camera cam(
         glm::vec3(0.0f, 0.0f, 3.0f),
         glm::vec3(0.0f, 0.0f, -0.5f),
